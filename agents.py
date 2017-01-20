@@ -165,7 +165,8 @@ def rule_match(state, rules):
 
 # ______________________________________________________________________________
 
-loc_A, loc_B = (0, 0), (1, 0)  # The two locations for the Vacuum world
+# The three locations for the Vacuum world
+loc_A, loc_B, loc_C = (0, 0), (1, 0), (2, 0)  # Add location C.
 
 
 def RandomVacuumAgent():
@@ -191,6 +192,7 @@ def TableDrivenVacuumAgent():
 
 def ReflexVacuumAgent():
     "A reflex agent for the two-state vacuum environment. [Figure 2.8]"
+
     def program(percept):
         location, status = percept
         if status == 'Dirty':
@@ -198,25 +200,31 @@ def ReflexVacuumAgent():
         elif location == loc_A:
             return 'Right'
         elif location == loc_B:
+            action = 'Left' if random.randint(0, 1) else 'Right'
+            return action  # Go to random location
+        elif location == loc_C:
             return 'Left'
     return Agent(program)
 
 
 def ModelBasedVacuumAgent():
     "An agent that keeps track of what locations are clean or dirty."
-    model = {loc_A: None, loc_B: None}
+    model = {loc_A: None, loc_B: None, loc_C: None}  # Add location C
 
     def program(percept):
         "Same as ReflexVacuumAgent, except if everything is clean, do NoOp."
         location, status = percept
         model[location] = status  # Update the model here
-        if model[loc_A] == model[loc_B] == 'Clean':
+        if model[loc_A] == model[loc_B] == model[loc_C] == 'Clean':
             return 'NoOp'
         elif status == 'Dirty':
             return 'Suck'
         elif location == loc_A:
             return 'Right'
         elif location == loc_B:
+            return ('Right' if model[loc_A] == 'Dirty' else
+                    ('Left' if model[loc_C] == 'Dirty' else 'NoOp'))
+        elif location == loc_C:
             return 'Left'
     return Agent(program)
 
@@ -615,21 +623,54 @@ class VacuumEnvironment(XYEnvironment):
             agent.performance -= 1
 
 
+class DefaultMarker():
+    """Marker class to give performance measure of agent"""
+    def __init__(self, env):
+        self.env = env
+        self.name = 'DefaultMarker'
+
+    def mark(self, agent, action):
+        """In this marker the agent is penalized one point for each movement
+        (a movement is either a 'Left' or a 'Right') and rewarded 10 points
+        for one cleaning."""
+        if action == 'Left' or action == 'Right':
+            agent.performance -= 1
+        elif action == 'Suck' and self.env.status[agent.location] == 'Dirty':
+            agent.performance += 10
+
+
+class YetAnotherMarker():
+    """Marker class to give performance measure of agent"""
+    def __init__(self, env):
+        self.env = env
+        self.name = 'YetAnotherMarker'
+
+    def mark(self, agent, action):
+        """In this marker the agent is penalized one point for each action
+        (an action is everything except for NoOp) and rewarded 1 points
+        per clean room."""
+        if action is not 'NoOp':
+            agent.performance -= 1
+        agent.performance += [x for x in self.env.status].count('Clean')
+
+
 class TrivialVacuumEnvironment(Environment):
 
-    """This environment has two locations, A and B. Each can be Dirty
+    """This environment has three locations, A, B, and C. Each can be Dirty
     or Clean.  The agent perceives its location and the location's
     status. This serves as an example of how to implement a simple
     Environment."""
 
-    def __init__(self):
+    def __init__(self, markerFactory=DefaultMarker):
         super(TrivialVacuumEnvironment, self).__init__()
         self.status = {loc_A: random.choice(['Clean', 'Dirty']),
-                       loc_B: random.choice(['Clean', 'Dirty'])}
+                       loc_B: random.choice(['Clean', 'Dirty']),
+                       loc_C: random.choice(['Clean', 'Dirty'])}
+        self.marker = markerFactory(self)
 
     def thing_classes(self):
-        return [Wall, Dirt, ReflexVacuumAgent, RandomVacuumAgent,
-                TableDrivenVacuumAgent, ModelBasedVacuumAgent]
+        return [Wall, Dirt,
+                ReflexVacuumAgent, RandomVacuumAgent, ModelBasedVacuumAgent]
 
     def percept(self, agent):
         "Returns the agent's location, and the location status (Dirty/Clean)."
@@ -639,19 +680,53 @@ class TrivialVacuumEnvironment(Environment):
         """Change agent's location and/or location's status; track performance.
         Score 10 for each dirt cleaned; -1 for each move."""
         if action == 'Right':
-            agent.location = loc_B
-            agent.performance -= 1
+            agent.location = loc_B if agent.location == loc_A else loc_C
         elif action == 'Left':
-            agent.location = loc_A
-            agent.performance -= 1
+            agent.location = loc_B if agent.location == loc_B else loc_A
         elif action == 'Suck':
-            if self.status[agent.location] == 'Dirty':
-                agent.performance += 10
             self.status[agent.location] = 'Clean'
+        self.marker.mark(agent, action)
 
     def default_location(self, thing):
         "Agents start in either location at random."
-        return random.choice([loc_A, loc_B])
+        return random.choice([loc_A, loc_B, loc_C])
+
+
+class tester():
+    """Testing class for vacuum cleaner"""
+    def __init__(self, agentFactory, agentType, markerFactory=DefaultMarker,
+                 steps=1000):
+        self.performance = 0
+        self.runs = []
+        self.steps = steps
+        self.agentType = agentType
+        for default_loc in [loc_A, loc_B, loc_C]:
+            for a in ['Clean', 'Dirty']:
+                for b in ['Clean', 'Dirty']:
+                    for c in ['Clean', 'Dirty']:
+                        agent = agentFactory()
+                        env = TrivialVacuumEnvironment(markerFactory)
+                        env.status[loc_A] = a
+                        env.status[loc_B] = b
+                        env.status[loc_C] = c
+                        env.add_thing(agent, default_loc)
+                        self.runs.append((agent, env))
+
+    def run(self):
+        markerName = ''
+        for agent, env in self.runs:
+            markerName = env.marker.name
+            env.run(self.steps)
+            print('Score for {} running {} steps using marker {}: {}'.format(
+                                        self.agentType,
+                                        self.steps,
+                                        markerName,
+                                        agent.performance))
+            self.performance += agent.performance
+        print('Average score among {} configs using marker {}: {}'.format(
+                                        len(self.runs),
+                                        markerName,
+                                        self.performance/len(self.runs)))
 
 # ______________________________________________________________________________
 # The Wumpus World
@@ -918,3 +993,17 @@ __doc__ += """
 >>> e.run(5)
 
 """
+
+ReflexAgentDefaultTester = tester(ReflexVacuumAgent, 'ReflexVacuumAgent',
+                                  DefaultMarker)
+ModelAgentDefaultTester = tester(ModelBasedVacuumAgent,
+                                 'ModelBasedVacuumAgent', DefaultMarker)
+ReflexAgentYetAnotherTester = tester(ReflexVacuumAgent, 'ReflexVacuumAgent',
+                                     YetAnotherMarker)
+ModelAgentYetAnotherTester = tester(ModelBasedVacuumAgent,
+                                    'ModelBasedVacuumAgent', YetAnotherMarker)
+
+ReflexAgentDefaultTester.run()
+ModelAgentDefaultTester.run()
+ReflexAgentYetAnotherTester.run()
+ModelAgentYetAnotherTester.run()
